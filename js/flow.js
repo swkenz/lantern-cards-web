@@ -6,6 +6,9 @@ import { Db, NodeKind, Rarity } from './data.js';
 import { Rng, SaveSystem, Gacha, RunState, BattleState, hpScaleFor } from './core.js';
 
 export class Flow {
+  /** What the developer top-up fills the crystals to. */
+  static devCrystals = 9_999_999;
+
   /**
    * @param {{ view?: object|null, rng?: Rng, save?: import('./core.js').SaveData }} [options]
    * Call goHome() once the view is ready (LcGame.Start does the same).
@@ -103,6 +106,15 @@ export class Flow {
     } else this.toast('ต้องมีสหายซ้ำและคริสตัลพอ');
     if (this.screen === 'team') this.view?.team?.();
     return ok;
+  }
+
+  /** Developer tool (see Dev in ui.js): fills the crystals up so the gacha and upgrades can be tried freely. */
+  devCrystals() {
+    this.save.crystals = Math.max(this.save.crystals, Flow.devCrystals);
+    this.persist();
+    this.toast('เติมคริสตัลเป็น ' + this.save.crystals.toLocaleString('en-US'));
+    // Menu screens draw their buttons from the amount, so draw them again.
+    if (['collection', 'companions', 'talismans', 'team'].includes(this.screen)) this.view?.[this.screen]?.();
   }
 
   pull(count) {

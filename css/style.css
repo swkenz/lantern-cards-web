@@ -81,6 +81,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0816; fon
 .logo { width: 340px; height: 340px; border-radius: 18px; background-size: cover; margin: 0 0 14px -18px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
 .crystal-pill { position: absolute; display: flex; align-items: center; gap: 12px; padding: 6px 18px; font-size: 22px; font-weight: 700; }
 .crystal-pill .gemi { width: 18px; height: 18px; background: #8cd9ff; transform: rotate(45deg); }
+.crystal-pill .dev-plus { width: 38px; height: 38px; margin: -2px -8px -2px 2px; border-radius: 50%; border: 2px solid #e3bf7a; background: #233a66; color: #ffe6a8; font-family: inherit; font-size: 30px; font-weight: 700; line-height: 1; padding: 0 0 3px; cursor: pointer; }
+.crystal-pill .dev-plus:active { transform: scale(0.92); }
 
 /* Map */
 .map-dot { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; transition: transform 0.12s; }

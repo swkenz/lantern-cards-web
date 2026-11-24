@@ -3,7 +3,7 @@ import { Db, Motion } from './data.js';
 import { Ev, SaveSystem } from './core.js';
 import { Flow } from './flow.js';
 import { Stage } from './stage.js';
-import { Ui } from './ui.js';
+import { Ui, Dev } from './ui.js';
 import { Sound } from './audio.js';
 
 Db.acts.forEach((act, i) => { act.arenaKey = 'act' + (i + 1); });
@@ -11,6 +11,8 @@ Db.acts.forEach((act, i) => { act.arenaKey = 'act' + (i + 1); });
 const params = new URLSearchParams(location.search);
 // ?test plays on a separate save, so testing never touches real progress.
 if (params.has('test')) SaveSystem.overrideKey = 'lanterncards.test';
+// ?dev turns developer mode on for this device (?dev=0 turns it off); see Dev in ui.js.
+if (params.has('dev')) Dev.set(params.get('dev') !== '0');
 
 class Game {
   constructor() {

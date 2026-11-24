@@ -37,6 +37,20 @@ function add(parent, ...kids) {
 }
 const text = (value, size, color = C.ivory, weight = 400, extra = {}) => el('div', null, { fontSize: size + 'px', color, fontWeight: weight, ...extra }, value);
 
+/**
+ * Developer mode, remembered on this device: open the game with ?dev (?dev=0 turns it off), or tap the crystal
+ * counter 7 times quickly. While it is on, the crystal counter has a "+" that fills the crystals up.
+ */
+const DEV_KEY = 'lanterncards.dev';
+export const Dev = {
+  get on() {
+    try { return localStorage.getItem(DEV_KEY) === '1'; } catch { return false; }
+  },
+  set(on) {
+    try { if (on) localStorage.setItem(DEV_KEY, '1'); else localStorage.removeItem(DEV_KEY); } catch { /* site data blocked */ }
+  },
+};
+
 export const art = {
   card: (key) => (!key ? '' : key.startsWith('heroine_') ? `assets/art/heroines/${key.slice(8)}_card.png` : `assets/art/cards/${key}.png`),
   heroineFace: (id) => `assets/art/heroines/${id}_card.png`,
@@ -123,7 +137,27 @@ export class Ui {
   crystalPill(parent, right, top) {
     const pill = at(add(parent, el('div', 'crystal-pill panel', { borderColor: C.gold })), null, top, right);
     add(pill, el('div', 'gemi'));
-    add(pill, el('span', null, null, this.save.crystals.toLocaleString('en-US') + ' คริสตัล'));
+    const label = add(pill, el('span', null, null, this.save.crystals.toLocaleString('en-US') + ' คริสตัล'));
+    // 7 quick taps switch developer mode on or off.
+    pill.addEventListener('click', () => {
+      const now = performance.now();
+      this.devTaps = (this.devTaps || []).filter((t) => now - t < 3000).concat(now);
+      if (this.devTaps.length < 7) return;
+      this.devTaps = [];
+      Dev.set(!Dev.on);
+      this.toast(Dev.on ? 'โหมดนักพัฒนา: เปิด  (กด + เพื่อเติมคริสตัล)' : 'โหมดนักพัฒนา: ปิด');
+      pill.remove();
+      this.crystalPill(parent, right, top);
+    });
+    if (Dev.on) {
+      const plus = add(pill, el('button', 'dev-plus', null, '+'));
+      plus.title = 'เติมคริสตัล (โหมดนักพัฒนา)';
+      plus.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.flow.devCrystals();
+        label.textContent = this.save.crystals.toLocaleString('en-US') + ' คริสตัล';
+      });
+    }
   }
 
   /** Same picture placement rules as Unity's Picture(): a square image at a fixed size and offset inside a frame. */
