@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ไพ่โคมไฟ · Lantern Cards</title>
+  <link rel="icon" href="assets/art/ui/logo.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="flash"></div>
+  <div id="floats"></div>
+  <div id="ui"></div>
+  <div id="loading">
+    <div class="logo" style="background-image: url('assets/art/ui/logo.png')"></div>
+    <div class="track"><div class="fillbar"></div></div>
+    <div class="msg">กำลังจุดโคมไฟ...</div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

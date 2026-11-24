@@ -1,0 +1,7 @@
+node_modules/
+# Raw Meshy downloads (the copies the game uses are in assets/models/heroines)
+source_art/meshy/
+*.tmp
+*.log
+.DS_Store
+Thumbs.db

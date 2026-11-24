@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Heroine projection alignment</title>
+<style>
+  body { margin: 0; background: #1b1626; color: #ddd; font-family: sans-serif; }
+  #row { display: flex; gap: 8px; padding: 8px; align-items: flex-start; }
+  #src { position: relative; }
+  #src img { height: 640px; display: block; }
+  #rect { position: absolute; border: 2px solid #4cf; box-sizing: border-box; pointer-events: none; }
+  canvas { background: #2c2540; }
+  #info { padding: 0 8px; font-size: 13px; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="row"><div id="src"><img id="img"><div id="rect"></div></div><canvas id="c" width="900" height="640"></canvas></div>
+<div id="info"></div>
+<script type="module">
+  // Shows a Meshy sculpt with its picture projected on it: front (orthographic), three-quarter and back,
+  // next to the picture with the projection rectangle drawn on it. Used to tune assets/models/heroines/projection.json.
+  import * as THREE from 'three';
+  import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+  import { bakeProjection, patchProjected, loadImage } from '../js/projection.js';
+
+  const q = new URLSearchParams(location.search);
+  const id = q.get('id') || 'minase';
+  const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setScissorTest(true);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8888aa, 2.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  sun.position.set(1, 2, 3);
+  scene.add(sun);
+
+  const json = await fetch('../assets/models/heroines/projection.json').then((r) => r.json()).catch(() => ({}));
+  const img = await loadImage(`../assets/art/heroines3d/${id}.jpg`);
+  document.getElementById('img').src = img.src;
+  const fbx = await new FBXLoader().loadAsync(`../assets/models/heroines/${id}.fbx`);
+  const box0 = new THREE.Box3().setFromObject(fbx);
+  const size = box0.getSize(new THREE.Vector3());
+  const scale = 1.75 / size.y;
+  const center = box0.getCenter(new THREE.Vector3());
+  fbx.scale.setScalar(scale);
+  fbx.position.set(-center.x * scale, -box0.min.y * scale, -center.z * scale);
+  const holder = new THREE.Group();
+  holder.add(fbx);
+  scene.add(holder);
+  holder.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(holder);
+  const bs = box.getSize(new THREE.Vector3());
+
+  window.apply = (params) => {
+    const textures = bakeProjection(holder, img, params, renderer);
+    holder.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      m.onBeforeCompile = (s) => patchProjected(s, textures);
+      o.material = m;
+    });
+    const k = 640 / img.height;
+    const r = document.getElementById('rect');
+    Object.assign(r.style, { left: params.rect[0] * k + 'px', top: params.rect[1] * k + 'px', width: (params.rect[2] - params.rect[0]) * k + 'px', height: (params.rect[3] - params.rect[1]) * k + 'px' });
+    draw();
+    document.getElementById('info').textContent = `${id} front=${params.front} rect=${params.rect.join(',')}  model box w=${bs.x.toFixed(3)} h=${bs.y.toFixed(3)} d=${bs.z.toFixed(3)}  aspect=${(bs.x / bs.y).toFixed(3)}`;
+  };
+
+  function draw() {
+    const views = [
+      { x: 0, w: 300, dir: new THREE.Vector3(0, 0, 1), ortho: true },
+      { x: 300, w: 300, dir: new THREE.Vector3(0.75, 0.1, 0.75), ortho: false },
+      { x: 600, w: 300, dir: new THREE.Vector3(0, 0.05, -1), ortho: false },
+    ];
+    for (const v of views) {
+      const aspect = v.w / 640;
+      let cam;
+      if (v.ortho) {
+        const h = 1.9;
+        cam = new THREE.OrthographicCamera(-h * aspect / 2, h * aspect / 2, h / 2, -h / 2, 0.1, 20);
+      } else cam = new THREE.PerspectiveCamera(35, aspect, 0.1, 20);
+      const f = window.front || 1;
+      cam.position.set(v.dir.x * 3.4 * f, 0.9 + v.dir.y * 3.4, v.dir.z * 3.4 * f);
+      cam.lookAt(0, 0.88, 0);
+      renderer.setViewport(v.x, 0, v.w, 640);
+      renderer.setScissor(v.x, 0, v.w, 640);
+      renderer.render(scene, cam);
+    }
+  }
+
+  /** Front close-up of one region (model space, metres): centre x/y and height of the view. */
+  window.closeup = (cx, cy, h, side = 0) => {
+    const aspect = 900 / 640;
+    const cam = new THREE.OrthographicCamera(-h * aspect / 2, h * aspect / 2, h / 2, -h / 2, 0.1, 20);
+    const f = window.front || 1;
+    cam.position.set(side * 3.4, cy, 3.4 * f * (side ? 0 : 1) + 0.0001);
+    cam.lookAt(side ? 0 : cx, cy, 0);
+    if (!side) { cam.position.x = cx; cam.lookAt(cx, cy, 0); }
+    renderer.setViewport(0, 0, 900, 640);
+    renderer.setScissor(0, 0, 900, 640);
+    renderer.render(scene, cam);
+  };
+
+  const saved = json[id];
+  const rect = q.get('rect') ? q.get('rect').split(',').map(Number) : saved?.rect || [0, 0, img.width, img.height];
+  const front = q.get('front') ? Number(q.get('front')) : saved?.front || 1;
+  window.front = front;
+  window.apply({ rect, front });
+  window.ready = { width: img.width, height: img.height, aspect: bs.x / bs.y, depth: bs.z };
+</script>
+</body>
+</html>
