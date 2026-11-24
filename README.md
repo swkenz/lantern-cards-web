@@ -61,9 +61,14 @@ node tools/rig/build.mjs            # all heroines, or: node tools/rig/build.mjs
 - Clips are blended toward the sculpt's own pose (`AMOUNT` in `tools/rig/anim.mjs`): arms do most of the
   acting, legs and hips stay close to the sculpt so long dresses keep their shape. The `pose` clip is the
   sculpt's pose breathing with Akari's idle.
+- Per heroine, `joints.json` can also hold `amount` (override `AMOUNT`, e.g. `"leftArm": 0.25` keeps Minase's
+  sleeve-bound left arm calm), `weights` (`radius` per bone kind for the surface each bone claims) and `clips`:
+  hand-keyed moves on top of the sculpt's pose (Tsubaki's `shoot` and `bless`), each key turning bones about
+  the character's own axes in degrees (X right, Y up, Z toward the enemy).
 - `node tools/rig/preview.mjs minase out.png front "bind!,pose@1,attack1@0.2,spell@0.25"` renders poses without
-  a browser (`!` colours the surface by bone). Needs `sharp` (`npm i -D sharp`).
-- Which clip each heroine strikes and supports with: `HEROINE_MOVES` in `js/stage.js`.
+  a browser (`!` colours the surface by bone). `node tools/rig/stretch.mjs minase attack1,block` measures how much
+  a clip stretches the surface. Both need `sharp` / plain Node (`npm i -D sharp` for the PNGs).
+- Which clip each heroine strikes and supports with, and who shoots from afar: `HEROINE_MOVES` in `js/stage.js`.
   A heroine without a `.glb` falls back to her static `.fbx`.
 
 ## Re-exporting models from Unity

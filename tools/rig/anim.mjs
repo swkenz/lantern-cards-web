@@ -1,6 +1,6 @@
 // Akari's animation clips, retargeted onto a fitted heroine skeleton.
 import { readGlb } from './glb.mjs';
-import { NAMES, OFFSET, IDX } from './skeleton.mjs';
+import { NAMES, OFFSET, IDX, PARENT } from './skeleton.mjs';
 import * as M from './math.mjs';
 
 export function readClips(glbPath) {
@@ -24,7 +24,7 @@ export function readClips(glbPath) {
 // Heroines act mostly with the upper body: legs and hips stay near the sculpt so long dresses keep their shape.
 export const AMOUNT = { arm: 0.6, spine: 0.5, head: 0.5, hips: 0.15, leg: 0.1, hipsMove: 0.1 };
 function amountFor(bone, A) {
-  if (/Shoulder|Arm|Hand/.test(bone)) return A.arm;
+  if (/Shoulder|Arm|Hand/.test(bone)) return (bone.startsWith('Left') ? A.leftArm : A.rightArm) ?? A.arm;
   if (/Leg|Foot|Toes/.test(bone)) return A.leg;
   if (bone === 'Hips') return A.hips;
   if (bone === 'Neck' || bone === 'Head') return A.head;
@@ -126,4 +126,45 @@ export function poseClip(clip, fit, J, name, amount = 1) {
     return { ...tr, values: v };
   });
   return { name, duration: clip.duration, tracks };
+}
+
+function eulerDeg([x, y, z]) {
+  const h = Math.PI / 360;
+  const qx = [Math.sin(x * h), 0, 0, Math.cos(x * h)], qy = [0, Math.sin(y * h), 0, Math.cos(y * h)], qz = [0, 0, Math.sin(z * h), Math.cos(z * h)];
+  return M.qmul(qz, M.qmul(qy, qx));
+}
+const smoothstep = (u) => u * u * (3 - 2 * u);
+
+/**
+ * A hand-made clip on top of the sculpt's pose. keys: [{ t, rot: { Bone: [x, y, z] }, move: [x, y, z] }]
+ * rot turns a bone (and what hangs from it) about the character's own axes, in degrees
+ * (X right, Y up, Z toward the enemy); move shifts the hips in metres. Missing values are 0 (the sculpt's pose).
+ */
+export function customClip(name, keys, fit, J, fps = 30) {
+  const bones = [...new Set(keys.flatMap((k) => Object.keys(k.rot || {})))];
+  const duration = keys[keys.length - 1].t;
+  const times = [];
+  for (let i = 0; i <= Math.round(duration * fps); i++) times.push(i / fps);
+  const at = (t, get) => {
+    let k = 0;
+    while (k < keys.length - 2 && keys[k + 1].t < t) k++;
+    const a = keys[k], b = keys[k + 1];
+    const u = smoothstep(Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))));
+    const va = get(a) || [0, 0, 0], vb = get(b) || [0, 0, 0];
+    return M.lerp3(va, vb, u);
+  };
+  const tracks = bones.map((bone) => {
+    const i = IDX[bone], p = PARENT[i];
+    const Wp = p < 0 ? M.QI : fit.W[p];
+    const values = new Float32Array(times.length * 4);
+    times.forEach((t, n) => {
+      const off = eulerDeg(at(t, (k) => k.rot?.[bone]));
+      values.set(M.qnorm(M.qmul(M.qmul(M.qconj(Wp), M.qmul(off, Wp)), fit.r[i])), n * 4);
+    });
+    return { bone, path: 'rotation', times: Float32Array.from(times), values };
+  });
+  const hips = new Float32Array(times.length * 3);
+  times.forEach((t, n) => hips.set(M.add(J.Hips, at(t, (k) => k.move)), n * 3));
+  tracks.push({ bone: 'Hips', path: 'translation', times: Float32Array.from(times), values: hips });
+  return { name, duration, tracks };
 }

@@ -30,7 +30,8 @@ class Heap {
   }
 }
 
-export function computeWeights(mesh, fit, { sigma = 0.02, rigid = {}, log = () => {} } = {}) {
+export function computeWeights(mesh, fit, opts = {}) {
+  const { sigma = 0.02, rigid = {}, log = () => {} } = opts;
   const { pos, index, count } = mesh;
   // Weld duplicated positions so seams do not cut the surface graph.
   const canon = new Int32Array(count);
@@ -74,6 +75,7 @@ export function computeWeights(mesh, fit, { sigma = 0.02, rigid = {}, log = () =
   }
   // Seeds: the surface closest to each bone, facing away from it.
   const bones = Object.keys(fit.seg);
+  const R = { ...RADIUS, ...(opts.radius || {}) };
   const seedOf = new Int16Array(count).fill(-1);
   for (let i = 0; i < count; i++) {
     if (!isCanon(i)) continue;
@@ -81,7 +83,7 @@ export function computeWeights(mesh, fit, { sigma = 0.02, rigid = {}, log = () =
     let best = null, bi = -1;
     for (let b = 0; b < bones.length; b++) { const s = fit.seg[bones[b]]; const d = segDist(p, s[0], s[1]); if (!best || d.d < best.d) { best = d; bi = b; } }
     const name = bones[bi], k = kind(name);
-    if (best.d > RADIUS[k]) continue;
+    if (best.d > R[k]) continue;
     const limb = !TORSO.includes(name) && k !== 'Hand' && k !== 'Toes';
     if (limb && (best.t < 0.08 || best.t > 0.92)) continue;
     const nn = M.norm([nor[i * 3], nor[i * 3 + 1], nor[i * 3 + 2]]);
@@ -131,7 +133,7 @@ export function computeWeights(mesh, fit, { sigma = 0.02, rigid = {}, log = () =
       }
       if (dmin === Infinity) for (let b = 0; b < bones.length; b++) { tmp[b] = D[b][v]; dmin = Math.min(dmin, tmp[b]); }
       // Cloth far from any bone blends over a wider band, so it stretches gently instead of tearing.
-      const s = sigma + 0.25 * Math.max(0, emin - 0.05);
+      const s = sigma + (opts.widen ?? 0.25) * Math.max(0, emin - 0.05);
       const w = new Float64Array(bones.length);
       let wsum = 0;
       for (let b = 0; b < bones.length; b++) { const x = (tmp[b] - dmin) / s; if (x < 4) { w[b] = Math.exp(-x * x); wsum += w[b]; } }
@@ -145,7 +147,7 @@ export function computeWeights(mesh, fit, { sigma = 0.02, rigid = {}, log = () =
         let e2min = Infinity;
         for (let b = 0; b < bones.length; b++) { const g = fit.seg[bones[b]]; ebuf[b] = segDist(p, g[0], g[1]).d; if (ebuf[b] > caps[b] || !(tmp[b] < dmin + 0.2)) ebuf[b] = Infinity; e2min = Math.min(e2min, ebuf[b]); }
         if (e2min < Infinity) {
-          const s2 = 0.03 + 0.2 * Math.max(0, e2min - 0.08);
+          const s2 = 0.03 + (opts.widen2 ?? 0.2) * Math.max(0, e2min - 0.08);
           let esum = 0;
           for (let b = 0; b < bones.length; b++) { const x = (ebuf[b] - e2min) / s2; ebuf[b] = x < 4 ? Math.exp(-x * x) : 0; esum += ebuf[b]; }
           for (let b = 0; b < bones.length; b++) w[b] = (1 - lam) * w[b] / wsum + lam * ebuf[b] / esum;

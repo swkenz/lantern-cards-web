@@ -32,10 +32,11 @@ const CREATURE_SPEED = { attack: 1.25, hit: 1.5, jump: 1, dance: 1 };
 // Rigged heroines (tools/rig) play Akari's clips, softened toward their own sculpted pose.
 const HEROINE_SPEED = { attack1: 1.1, attack2: 1.1, cleave: 1.3, spell: 1.25, block: 1.3, hit: 1.2 };
 // Which clip each heroine uses to strike and to support; `impact` is when the blow lands (seconds into the clip).
+// A ranged heroine shoots from her place instead of dashing in. shoot/bless are hand-keyed in tools/rig/joints.json.
 const HEROINE_MOVES = {
   minase: { strike: 'attack1', support: 'block', impact: 0.16 },
   homura: { strike: 'cleave', support: 'spell', impact: 0.3 },
-  tsubaki: { strike: 'attack1', support: 'spell', impact: 0.16 },
+  tsubaki: { strike: 'shoot', support: 'bless', impact: 0.17, ranged: true },
 };
 const DEFAULT_MOVES = { strike: 'attack1', support: 'spell', impact: 0.16 };
 
@@ -682,6 +683,21 @@ export class Stage {
     obj.rotation.set(0, Math.atan2(dir.x, dir.z), 0);
   }
 
+  /** Turns obj to face dir over a moment (the short way round). */
+  turn(obj, dir, seconds) {
+    const to = Math.atan2(dir.x, dir.z);
+    if (Stage.fast || seconds <= 0) return this.face(obj, dir);
+    const from = obj.rotation.y;
+    const d = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+    let t = 0;
+    this.ticks.push((dt) => {
+      t += dt;
+      const k = clamp01(t / seconds);
+      obj.rotation.y = from + d * smooth(k);
+      return k >= 1;
+    });
+  }
+
   placeHero(pos, dir) {
     this.hero.root.position.copy(pos);
     this.face(this.hero.root, dir);
@@ -777,6 +793,24 @@ export class Stage {
       ally.busy = false;
       return true;
     }
+    if (moves.ranged && ally.actor) {
+      // An archer looses an arrow from where she stands.
+      ally.busy = true;
+      const aim = this.enemyHome.clone().sub(ally.root.position).setY(0).normalize();
+      this.turn(ally.root, aim, 0.1);
+      ally.actor.play(moves.strike, 0.06, { once: true });
+      this.column(ally.root.position.clone(), color);
+      await this.wait(moves.impact / (HEROINE_SPEED[moves.strike] || 1));
+      const from = ally.root.position.clone().addScaledVector(UP, 1.25).addScaledVector(aim, 0.45);
+      await this.arrow(from, this.enemyChest, color, 0.2);
+      this.impactAt(color);
+      await this.wait(0.22);
+      this.wait(0.3).then(() => {
+        this.turn(ally.root, this.axis, 0.25);
+        ally.busy = false;
+      });
+      return true;
+    }
     const strike = this.grounded(this.enemyHome.clone().addScaledVector(this.axis, -(1.1 + this.enemyHeight * 0.35)).addScaledVector(this.side, 0.6));
     ally.busy = true;
     this.column(ally.root.position.clone(), color);
@@ -795,10 +829,7 @@ export class Stage {
     ally.root.rotation.z = 0;
     this.slashArc(this.enemyChest, color);
     this.slashArc(this.enemyChest, color.clone().lerp(new THREE.Color(1, 1, 1), 0.4));
-    this.column(this.enemyHome, color);
-    this.shockwave(this.enemyHome, 4 + this.enemyHeight, color);
-    this.burst(this.enemyChest, color, 60, 10);
-    this.shake(0.5);
+    this.impactAt(color);
     await this.wait(0.22);
     // Return a moment later, without holding up the rest of the turn.
     this.wait(0.35).then(async () => {
@@ -807,6 +838,41 @@ export class Stage {
       ally.busy = false;
     });
     return true;
+  }
+
+  /** A heroine's blow landing on the enemy. */
+  impactAt(color) {
+    this.column(this.enemyHome, color);
+    this.shockwave(this.enemyHome, 4 + this.enemyHeight, color);
+    this.burst(this.enemyChest, color, 60, 10);
+    this.shake(0.5);
+  }
+
+  /** A streak of light flying straight from `from` to `to`. */
+  async arrow(from, to, color, time) {
+    if (Stage.fast) return;
+    const bolt = new THREE.Mesh(this.sphereGeo, this.glowMaterial(color.clone().multiplyScalar(3), 1));
+    bolt.scale.set(0.09, 0.09, 1.1);
+    bolt.position.copy(from);
+    bolt.lookAt(to);
+    this.scene.add(bolt);
+    await new Promise((resolve) => {
+      let t = 0;
+      this.ticks.push((dt) => {
+        t += dt;
+        const k = clamp01(t / time);
+        bolt.position.lerpVectors(from, to, k);
+        this.sparks.emit(bolt.position.clone(), inSphere().multiplyScalar(0.25), color.clone().multiplyScalar(1.5), 0.7, 0.16, 0.2);
+        if (k >= 1) {
+          resolve();
+          return true;
+        }
+        return false;
+      });
+    });
+    this.scene.remove(bolt);
+    bolt.material.dispose();
+    this.burst(to, color, 24, 7);
   }
 
   get enemyChest() {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { loadHeroine } from './mesh.mjs';
 import { fitSkeleton } from './fit.mjs';
 import { computeWeights } from './weights.mjs';
-import { readClips, retarget, poseClip } from './anim.mjs';
+import { readClips, retarget, poseClip, customClip, AMOUNT } from './anim.mjs';
 import { writeGlb } from './writeglb.mjs';
 import { NAMES } from './skeleton.mjs';
 
@@ -23,10 +23,11 @@ for (const id of ids) {
   const fit = fitSkeleton(J);
   const off = NAMES.map((n, i) => [n, fit.err[i]]).filter(([, e]) => e > 0.015).map(([n, e]) => `${n} ${(e * 100).toFixed(1)}cm`);
   console.log(`${id}: ${mesh.count} verts, leg scale ${fit.legScale.toFixed(3)}${off.length ? ', joints moved: ' + off.join(', ') : ''}`);
-  const { joints, weights } = computeWeights(mesh, fit, { log: (s) => console.log('  ' + s) });
-  const clips = akari.map((c) => retarget(c, fit, J));
+  const { joints, weights } = computeWeights(mesh, fit, { ...(J.weights || {}), log: (s) => console.log('  ' + s) });
+  const clips = akari.map((c) => retarget(c, fit, J, { ...AMOUNT, ...(J.amount || {}) }));
   clips.push(poseClip(akari.find((c) => c.name === 'idle'), fit, J, 'pose', 1));
   clips.push(poseClip(akari.find((c) => c.name === 'combat_idle'), fit, J, 'pose_combat', 1));
+  for (const [name, keys] of Object.entries(J.clips || {})) clips.push(customClip(name, keys, fit, J));
   const bytes = writeGlb(path.join(root, `assets/models/heroines/${id}.glb`), { mesh, joints, weights, fit, clips, name: id });
   console.log(`  wrote ${id}.glb ${(bytes / 1048576).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
