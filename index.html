@@ -6,13 +6,17 @@
   <title>ไพ่โคมไฟ · Lantern Cards</title>
   <link rel="icon" href="assets/art/ui/logo.png">
   <link rel="stylesheet" href="css/style.css">
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "./node_modules/three/build/three.module.js",
-        "three/addons/": "./node_modules/three/examples/jsm/"
-      }
-    }
+  <script>
+    // three.js comes from node_modules when running locally (npm install), and from a CDN when hosted
+    // (GitHub Pages has no node_modules). Same pinned version either way.
+    (function () {
+      var local = /^(localhost|127\.0\.0\.1|\[::1\]|192\.168\.|10\.)/.test(location.hostname);
+      var base = local ? './node_modules/three/' : 'https://cdn.jsdelivr.net/npm/three@0.187.0/';
+      var map = document.createElement('script');
+      map.type = 'importmap';
+      map.textContent = JSON.stringify({ imports: { three: base + 'build/three.module.js', 'three/addons/': base + 'examples/jsm/' } });
+      document.currentScript.after(map);
+    })();
   </script>
 </head>
 <body>

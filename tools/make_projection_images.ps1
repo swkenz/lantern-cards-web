@@ -1,7 +1,8 @@
 # Builds the pictures projected onto the Meshy heroine sculpts (assets/art/heroines3d/<id>.jpg).
 # Same crop Meshy received, but where other characters were masked out in white, the heroine's
 # edge colours are stretched across instead, so geometry there picks up her colours, not white.
-param([string]$Source = "$env:TEMP\claude\0ec78cf5c0a9c370\2bdc58f6-2ad9-4941-b72f-613405cd8aee\scratchpad\downloads\heroines")
+# -Source: folder holding the full Canva pictures (<id>_full.png).
+param([Parameter(Mandatory = $true)][string]$Source)
 
 Add-Type -AssemblyName System.Drawing
 $out = Join-Path $PSScriptRoot '..\assets\art\heroines3d'
