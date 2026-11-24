@@ -8,6 +8,7 @@ import { fitSkeleton } from './fit.mjs';
 import { computeWeights } from './weights.mjs';
 import { readClips, retarget, poseClip, customClip, AMOUNT } from './anim.mjs';
 import { writeGlb } from './writeglb.mjs';
+import { bakeBackColours } from './backcolours.mjs';
 import { NAMES } from './skeleton.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,7 @@ for (const id of ids) {
   clips.push(poseClip(akari.find((c) => c.name === 'idle'), fit, J, 'pose', 1));
   clips.push(poseClip(akari.find((c) => c.name === 'combat_idle'), fit, J, 'pose_combat', 1));
   for (const [name, keys] of Object.entries(J.clips || {})) clips.push(customClip(name, keys, fit, J));
-  const bytes = writeGlb(path.join(root, `assets/models/heroines/${id}.glb`), { mesh, joints, weights, fit, clips, name: id });
+  const back = await bakeBackColours(id, mesh, root);
+  const bytes = writeGlb(path.join(root, `assets/models/heroines/${id}.glb`), { mesh, joints, weights, fit, clips, name: id, back });
   console.log(`  wrote ${id}.glb ${(bytes / 1048576).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }

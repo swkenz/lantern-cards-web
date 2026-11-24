@@ -2,7 +2,7 @@
 import fs from 'fs';
 import { NAMES, PARENT } from './skeleton.mjs';
 
-export function writeGlb(file, { mesh, joints, weights, fit, clips, name }) {
+export function writeGlb(file, { mesh, joints, weights, fit, clips, name, back = null }) {
   const chunks = [], views = [], accessors = [];
   let offset = 0;
   const view = (typed, target) => {
@@ -24,6 +24,8 @@ export function writeGlb(file, { mesh, joints, weights, fit, clips, name }) {
   const JOINTS_0 = accessor(joints, 5121, 'VEC4', n, { target: 34962 });
   const WEIGHTS_0 = accessor(weights, 5121, 'VEC4', n, { normalized: true, target: 34962 });
   const indices = accessor(Uint32Array.from(mesh.index), 5125, 'SCALAR', mesh.index.length, { target: 34963 });
+  // Colours for what the picture cannot see (tools/rig/backcolours.mjs), sRGB bytes; three.js reads it as `_projback`.
+  const extra = back ? { _PROJBACK: accessor(back, 5121, 'VEC4', n, { normalized: true, target: 34962 }) } : {};
   const ibm = accessor(Float32Array.from(fit.ibm.flat()), 5126, 'MAT4', NAMES.length);
 
   const jointNode = (i) => i + 1;
@@ -52,7 +54,7 @@ export function writeGlb(file, { mesh, joints, weights, fit, clips, name }) {
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes,
-    meshes: [{ name: name + 'Body', primitives: [{ attributes: { POSITION, JOINTS_0, WEIGHTS_0 }, indices, mode: 4 }] }],
+    meshes: [{ name: name + 'Body', primitives: [{ attributes: { POSITION, JOINTS_0, WEIGHTS_0, ...extra }, indices, mode: 4 }] }],
     skins: [{ joints: NAMES.map((_, i) => jointNode(i)), inverseBindMatrices: ibm, skeleton: 1 }],
     animations,
     accessors,

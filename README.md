@@ -65,9 +65,13 @@ node tools/rig/build.mjs            # all heroines, or: node tools/rig/build.mjs
   sleeve-bound left arm calm), `weights` (`radius` per bone kind for the surface each bone claims) and `clips`:
   hand-keyed moves on top of the sculpt's pose (Tsubaki's `shoot` and `bless`), each key turning bones about
   the character's own axes in degrees (X right, Y up, Z toward the enemy).
+- The build also bakes the colours of what each heroine's picture cannot see (her back, under her arms):
+  they are carried along the model from the nearest surface the picture does see, and skin does not spread
+  far, so the back of the head becomes hair (`tools/rig/backcolours.mjs`, `js/surfacefill.js`). Rebuild after
+  changing a picture or `projection.json`. Without `sharp` the game works them out itself when it loads.
 - `node tools/rig/preview.mjs minase out.png front "bind!,pose@1,attack1@0.2,spell@0.25"` renders poses without
   a browser (`!` colours the surface by bone). `node tools/rig/stretch.mjs minase attack1,block` measures how much
-  a clip stretches the surface. Both need `sharp` / plain Node (`npm i -D sharp` for the PNGs).
+  a clip stretches the surface. `npm install` brings `sharp`, which the PNGs and the colour bake need.
 - Which clip each heroine strikes and supports with, and who shoots from afar: `HEROINE_MOVES` in `js/stage.js`.
   A heroine without a `.glb` falls back to her static `.fbx`.
 

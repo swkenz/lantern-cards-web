@@ -40,6 +40,27 @@ const HEROINE_MOVES = {
 };
 const DEFAULT_MOVES = { strike: 'attack1', support: 'spell', impact: 0.16 };
 
+/** Whether this GPU can render half-float colour with multisampling (a black screen otherwise). */
+function multisampleWorks(renderer, samples) {
+  const gl = renderer.getContext();
+  try {
+    gl.getError();
+    const fb = gl.createFramebuffer(), rb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA16F, 4, 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rb);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE && gl.getError() === gl.NO_ERROR;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    gl.deleteRenderbuffer(rb);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Canvas textures for effects ----------
 
 function canvasTexture(size, draw) {
@@ -365,13 +386,20 @@ export class Stage {
 
   constructor(canvas) {
     this.canvas = canvas;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    // Phones get lighter shadows and a render scale that follows the frame rate (see adaptResolution).
+    const mobile = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+    this.quality = mobile ? { maxRatio: 1.5, minRatio: 0.7, shadowSize: 1024 } : { maxRatio: 1.75, minRatio: 1, shadowSize: 2048 };
+    // No antialias on the canvas itself: everything is drawn off-screen first (bloom), so the multisampling
+    // has to happen there (see the composer below).
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    // Phones start a little lower and climb if they keep up (adaptResolution).
+    this.pixelRatio = Math.min(window.devicePixelRatio, mobile ? 1.25 : this.quality.maxRatio);
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = mobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(58, 16 / 9, 0.12, 500);
@@ -392,7 +420,7 @@ export class Stage {
     this.hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8a7a5a, 1.15);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 1.9);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(this.quality.shadowSize, this.quality.shadowSize);
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.03;
     const sc = this.sun.shadow.camera;
@@ -436,7 +464,13 @@ export class Stage {
     this.glow = 1.2;
     this.alternate = false;
 
-    this.composer = new EffectComposer(this.renderer);
+    // The scene is rendered into this target before bloom; multisampling it is what smooths the edges
+    // (the canvas' own antialias never sees the 3D). Half-float keeps bright lantern light for the bloom.
+    const floats = this.renderer.extensions.has('EXT_color_buffer_float') || this.renderer.extensions.has('EXT_color_buffer_half_float');
+    const drawing = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    let samples = floats ? Math.min(4, this.renderer.capabilities.maxSamples || 0) : 0;
+    if (samples && !multisampleWorks(this.renderer, samples)) samples = 0;
+    this.composer = new EffectComposer(this.renderer, new THREE.WebGLRenderTarget(drawing.x, drawing.y, { type: floats ? THREE.HalfFloatType : THREE.UnsignedByteType, samples }));
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.5, 0.4, 1.05);
     this.composer.addPass(this.bloom);
@@ -934,12 +968,40 @@ export class Stage {
   loop() {
     const frame = () => {
       requestAnimationFrame(frame);
-      const real = Math.min(this.clock.getDelta(), 0.1);
+      const raw = this.clock.getDelta();
+      const real = Math.min(raw, 0.1);
       const dt = real * this.timeScale;
       this.update(dt, real);
       this.composer.render();
+      this.adaptResolution(raw);
     };
     frame();
+  }
+
+  /**
+   * Dynamic resolution: every 2 seconds, a slow device (under ~45 fps) renders fewer pixels and a fast one
+   * gets them back, up to its own limit. After lowering it waits a while before trying higher again.
+   */
+  adaptResolution(seconds) {
+    const s = (this.frameStats ??= { time: 0, frames: 0, hold: 0 });
+    if (seconds > 0.25 || document.hidden) return; // loading hitches and tab switches say nothing about speed
+    s.time += seconds;
+    s.frames++;
+    s.hold = Math.max(0, s.hold - seconds);
+    if (s.time < 2) return;
+    const avg = s.time / s.frames;
+    s.time = 0;
+    s.frames = 0;
+    const cap = Math.min(window.devicePixelRatio, this.quality.maxRatio);
+    let ratio = this.pixelRatio;
+    if (avg > 1 / 45) {
+      ratio = Math.max(this.quality.minRatio, ratio - 0.15);
+      s.hold = 12;
+    } else if (avg < 1 / 56 && s.hold <= 0) ratio = Math.min(cap, ratio + 0.1);
+    if (Math.abs(ratio - this.pixelRatio) < 0.01) return;
+    this.pixelRatio = ratio;
+    this.renderer.setPixelRatio(ratio);
+    this.composer.setPixelRatio(ratio);
   }
 
   update(dt, real) {

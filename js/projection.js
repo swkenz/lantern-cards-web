@@ -1,7 +1,10 @@
 // Colours an untextured Meshy sculpt by projecting its source picture onto it from the front.
-// Faces that point away from the picture get a blurred version of the same spot, so the back of
-// the model keeps the right palette (hair stays hair-coloured) without copying the face onto it.
+// What the picture cannot see (the back, under the arms) takes the colour of the nearest surface it does see,
+// carried along the model (surfacefill.js): the back of the head becomes hair, the back of a dress stays dress.
+// Rigged heroines carry those colours baked in their .glb (`_projback`, tools/rig/backcolours.mjs); anything
+// else has them worked out here.
 import * as THREE from 'three';
+import { fillSurfaceColours, looksLikeSkin } from './surfacefill.js';
 
 export function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -12,14 +15,48 @@ export function loadImage(url) {
   });
 }
 
-function blurred(img, width = 14) {
+/** The picture's pixels (at most 512 wide), for reading colours on the CPU. */
+function pixelsOf(img) {
   const c = document.createElement('canvas');
-  c.width = width;
-  c.height = Math.max(4, Math.round((img.height / img.width) * width));
-  const g = c.getContext('2d');
-  g.filter = 'blur(1px)';
+  c.width = Math.min(512, img.width);
+  c.height = Math.max(1, Math.round((img.height / img.width) * c.width));
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.drawImage(img, 0, 0, c.width, c.height);
-  return c;
+  return { data: g.getImageData(0, 0, c.width, c.height).data, width: c.width, height: c.height };
+}
+
+const toLinear = (c) => ((c /= 255) < 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+
+/** Linear colours for every vertex: baked ones when the model has them, otherwise carried over the surface. */
+function backColours(o, uv, frontness, img) {
+  const g = o.geometry;
+  const n = g.attributes.position.count;
+  const out = new Float32Array(n * 3);
+  const baked = g.attributes._projback;
+  if (baked) {
+    for (let i = 0; i < n; i++) {
+      out[i * 3] = toLinear(baked.getX(i) * 255); out[i * 3 + 1] = toLinear(baked.getY(i) * 255); out[i * 3 + 2] = toLinear(baked.getZ(i) * 255);
+    }
+    return out;
+  }
+  const px = (img.pixels ??= pixelsOf(img));
+  const known = new Uint8Array(n), penalty = new Float32Array(n);
+  const scale = o.matrixWorld.getMaxScaleOnAxis() || 1;
+  let sum = [0, 0, 0], seeds = 0;
+  for (let i = 0; i < n; i++) {
+    if (frontness[i] <= 0.35) continue;
+    const x = Math.min(px.width - 1, Math.max(0, Math.round(uv[i * 2] * (px.width - 1))));
+    const y = Math.min(px.height - 1, Math.max(0, Math.round((1 - uv[i * 2 + 1]) * (px.height - 1))));
+    const k = (y * px.width + x) * 4;
+    out[i * 3] = toLinear(px.data[k]); out[i * 3 + 1] = toLinear(px.data[k + 1]); out[i * 3 + 2] = toLinear(px.data[k + 2]);
+    known[i] = 1;
+    if (looksLikeSkin(px.data[k], px.data[k + 1], px.data[k + 2])) penalty[i] = 0.08 / scale;
+    sum = [sum[0] + out[i * 3], sum[1] + out[i * 3 + 1], sum[2] + out[i * 3 + 2]];
+    seeds++;
+  }
+  const reached = fillSurfaceColours(g.attributes.position.array, g.index ? g.index.array : null, out, known, { penalty });
+  for (let i = 0; i < n; i++) if (!reached[i]) for (let c = 0; c < 3; c++) out[i * 3 + c] = seeds ? sum[c] / seeds : 0.6;
+  return out;
 }
 
 /**
@@ -30,7 +67,7 @@ function blurred(img, width = 14) {
  */
 /**
  * Front depth map of the model (orthographic, like a shadow map), so only the surface the picture
- * actually "sees" gets the sharp projection; hidden surfaces behind it get the soft colours.
+ * actually "sees" gets the sharp projection; hidden surfaces behind it get the carried colours.
  */
 function frontDepth(renderer, holder, box, front, size = 768) {
   const w = box.max.x - box.min.x, h = box.max.y - box.min.y;
@@ -121,28 +158,25 @@ export function bakeProjection(holder, img, params, renderer) {
     }
     g.setAttribute('projUv', new THREE.BufferAttribute(uv, 2));
     g.setAttribute('frontness', new THREE.BufferAttribute(fr, 1));
+    g.setAttribute('projBack', new THREE.BufferAttribute(backColours(o, uv, fr, img), 3));
   });
   const sharp = new THREE.Texture(img);
   sharp.colorSpace = THREE.SRGBColorSpace;
   sharp.anisotropy = 4;
   sharp.needsUpdate = true;
-  const soft = new THREE.CanvasTexture(blurred(img));
-  soft.colorSpace = THREE.SRGBColorSpace;
-  return { sharp, soft };
+  return { sharp };
 }
 
-/** Shader patch: multiplies the diffuse colour by the projected picture (sharp in front, soft behind). */
+/** Shader patch: multiplies the diffuse colour by the projected picture in front, and the carried colours behind. */
 export function patchProjected(shader, textures) {
   shader.uniforms.uProjSharp = { value: textures.sharp };
-  shader.uniforms.uProjSoft = { value: textures.soft };
   shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute vec2 projUv;\nattribute float frontness;\nvarying vec2 vProjUv;\nvarying float vFrontness;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvProjUv = projUv;\nvFrontness = frontness;');
+    .replace('#include <common>', '#include <common>\nattribute vec2 projUv;\nattribute float frontness;\nattribute vec3 projBack;\nvarying vec2 vProjUv;\nvarying float vFrontness;\nvarying vec3 vProjBack;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvProjUv = projUv;\nvFrontness = frontness;\nvProjBack = projBack;');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform sampler2D uProjSharp;\nuniform sampler2D uProjSoft;\nvarying vec2 vProjUv;\nvarying float vFrontness;')
+    .replace('#include <common>', '#include <common>\nuniform sampler2D uProjSharp;\nvarying vec2 vProjUv;\nvarying float vFrontness;\nvarying vec3 vProjBack;')
     .replace('#include <map_fragment>', `#include <map_fragment>
       vec2 puv = clamp(vProjUv, vec2(0.001), vec2(0.999));
       vec3 projSharp = texture2D(uProjSharp, puv).rgb;
-      vec3 projSoft = texture2D(uProjSoft, puv).rgb;
-      diffuseColor.rgb *= mix(projSoft, projSharp, vFrontness) * 1.25;`);
+      diffuseColor.rgb *= mix(vProjBack, projSharp, vFrontness) * 1.25;`);
 }
