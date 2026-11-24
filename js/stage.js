@@ -29,6 +29,15 @@ function inSphere() {
 // Speeds of the Unity Animator states, so timings match the original.
 const HERO_SPEED = { attack1: 1.15, attack2: 1.15, attack3: 1.5, cleave: 1.25, whirlwind: 1.6, dash: 1.5, spell: 1.4, block: 1, hit: 1, knockback: 1.3, drink: 1.5, roll: 1.35, interact: 1.6 };
 const CREATURE_SPEED = { attack: 1.25, hit: 1.5, jump: 1, dance: 1 };
+// Rigged heroines (tools/rig) play Akari's clips, softened toward their own sculpted pose.
+const HEROINE_SPEED = { attack1: 1.1, attack2: 1.1, cleave: 1.3, spell: 1.25, block: 1.3, hit: 1.2 };
+// Which clip each heroine uses to strike and to support; `impact` is when the blow lands (seconds into the clip).
+const HEROINE_MOVES = {
+  minase: { strike: 'attack1', support: 'block', impact: 0.16 },
+  homura: { strike: 'cleave', support: 'spell', impact: 0.3 },
+  tsubaki: { strike: 'attack1', support: 'spell', impact: 0.16 },
+};
+const DEFAULT_MOVES = { strike: 'attack1', support: 'spell', impact: 0.16 };
 
 // ---------- Canvas textures for effects ----------
 
@@ -293,9 +302,10 @@ function stylizeWorld(root) {
 // ---------- Actors ----------
 
 class Actor {
-  constructor(gltf, base, speeds, style) {
-    this.root = SkeletonUtils.clone(gltf.scene);
-    this.materials = stylizeCharacter(this.root, style);
+  /** gltf.scene is cloned and styled, unless `prepared` holds an already-styled clone and its materials. */
+  constructor(gltf, base, speeds, style, prepared = null) {
+    this.root = prepared ? prepared.root : SkeletonUtils.clone(gltf.scene);
+    this.materials = prepared ? prepared.materials : stylizeCharacter(this.root, style);
     this.mixer = new THREE.AnimationMixer(this.root);
     this.actions = {};
     this.speeds = speeds;
@@ -490,7 +500,9 @@ export class Stage {
 
   /**
    * A heroine's 3D model (from Meshy), if one has been added to assets/models/heroines.
-   * Static sculpts: normalized to 1.75 m, feet on the ground, facing +Z. Resolves null when missing.
+   * <id>.glb is the sculpt rigged with Akari's skeleton and clips (built by tools/rig); <id>.fbx is the static
+   * sculpt it falls back to. Normalized to 1.75 m, feet on the ground, facing +Z. Resolves null when missing.
+   * Returns { root, materials, clips } where clips is empty for a static sculpt.
    */
   async heroineModel(id, element = Element.Light) {
     this.heroineCache ??= new Map();
@@ -499,16 +511,19 @@ export class Stage {
     if (!this.heroineCache.has(id)) {
       const fbx = async () => {
         this.fbxLoader ??= new (await import('three/addons/loaders/FBXLoader.js')).FBXLoader();
-        return { scene: await this.fbxLoader.loadAsync(`assets/models/heroines/${id}.fbx`) };
+        return { scene: await this.fbxLoader.loadAsync(`assets/models/heroines/${id}.fbx`), animations: [] };
       };
       this.heroineCache.set(id, this.load(`assets/models/heroines/${id}.glb`).catch(fbx).then(async (gltf) => {
         const model = gltf.scene;
+        const rigged = gltf.animations.length > 0;
         model.traverse((o) => {
           if (!o.isMesh) return;
+          if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
           // Untextured sculpts become porcelain spirits tinted by their element.
           const list = Array.isArray(o.material) ? o.material : [o.material];
           for (const m of list) if (!m.map) m.color = tint.clone();
         });
+        model.updateMatrixWorld(true); // skinned bounds read the bones' world matrices
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const scale = 1.75 / Math.max(0.01, size.y);
@@ -532,12 +547,21 @@ export class Stage {
           });
           rimStrength = 0.45;
         }
-        stylizeCharacter(holder, { rim: elementColor(element).getHex(), rimStrength, width: 0.0022 });
-        return holder;
+        const materials = stylizeCharacter(holder, { rim: elementColor(element).getHex(), rimStrength, width: 0.0022 });
+        // Clones copy userData as JSON, which would serialize the textures every time.
+        holder.traverse((o) => { delete o.userData.projected; });
+        return { holder, materials, clips: rigged ? gltf.animations : [] };
       }).catch(() => null));
     }
     const template = await this.heroineCache.get(id);
-    return template ? template.clone(true) : null;
+    if (!template) return null;
+    try {
+      const root = template.clips.length ? SkeletonUtils.clone(template.holder) : template.holder.clone(true);
+      return { root, materials: template.materials, clips: template.clips };
+    } catch (e) {
+      console.warn('heroine model', id, e);
+      return null;
+    }
   }
 
   clearAllies() {
@@ -552,14 +576,26 @@ export class Stage {
     const slots = [[-0.9, -1.7], [-2.0, -0.8], [-0.2, -3.0]];
     let i = 0;
     for (const heroine of team) {
-      const root = await this.heroineModel(heroine.id, heroine.element);
-      if (!root || i >= slots.length) continue;
+      const model = await this.heroineModel(heroine.id, heroine.element);
+      if (!model || i >= slots.length) continue;
+      const { root } = model;
       const [back, across] = slots[i++];
       const home = this.grounded(this.heroHome.clone().addScaledVector(this.axis, back).addScaledVector(this.side, across));
       root.position.copy(home);
       this.face(root, this.axis);
       this.scene.add(root);
-      this.allies.push({ id: heroine.id, root, home, phase: Math.random() * 6 });
+      let actor = null;
+      if (model.clips.length) {
+        // Rigged: she holds her sculpted pose and breathes with it ("pose" clip), out of step with the others.
+        try {
+          actor = new Actor({ animations: model.clips }, 'pose', HEROINE_SPEED, null, { root, materials: model.materials });
+          if (actor.current) actor.current.time = Math.random() * actor.current.getClip().duration;
+        } catch (e) {
+          console.warn('heroine clips', heroine.id, e);
+          actor = null;
+        }
+      }
+      this.allies.push({ id: heroine.id, root, home, actor, phase: Math.random() * 6 });
     }
   }
 
@@ -727,9 +763,11 @@ export class Stage {
     const ally = (this.allies || []).find((a) => a.id === id);
     if (!ally || Stage.fast) return false;
     const color = elementColor(element);
+    const moves = HEROINE_MOVES[id] || DEFAULT_MOVES;
     if (!attack) {
       // Support cards: she rises in a pillar of light and sends it to Akari.
       ally.busy = true;
+      ally.actor?.play(moves.support, 0.12, { once: true });
       this.column(ally.root.position.clone(), color);
       await this.tween(ally.root, ally.home.clone().addScaledVector(UP, 0.5), 0.18, (t) => Math.sin(t * Math.PI / 2));
       await this.projectile(ally.root.position.clone().addScaledVector(UP, 1.2), this.heroChest, color, 0.3);
@@ -748,7 +786,11 @@ export class Stage {
       return false;
     });
     void trail;
-    await this.tween(ally.root, strike, 0.18);
+    if (ally.actor) {
+      // The swing starts during the dash so the blow lands as she arrives.
+      ally.actor.play(moves.strike, 0.08, { once: true });
+      await Promise.all([this.tween(ally.root, strike, 0.18), this.wait(moves.impact / (HEROINE_SPEED[moves.strike] || 1))]);
+    } else await this.tween(ally.root, strike, 0.18);
     this.face(ally.root, this.axis);
     ally.root.rotation.z = 0;
     this.slashArc(this.enemyChest, color);
@@ -836,11 +878,12 @@ export class Stage {
 
   update(dt, real) {
     for (const actor of [this.hero, this.enemy, this.companion]) actor?.mixer.update(dt);
-    // Allies breathe: a gentle bob and sway while waiting.
+    // Allies breathe: rigged ones through their pose clip, static sculpts with a gentle bob and sway.
     if (this.allies) {
       const t = performance.now() / 1000;
       for (const a of this.allies) {
-        if (a.busy) continue;
+        a.actor?.mixer.update(dt);
+        if (a.busy || a.actor) continue;
         a.root.position.y = a.home.y + Math.sin(t * 1.6 + a.phase) * 0.02;
         a.root.rotation.z = Math.sin(t * 0.9 + a.phase) * 0.012;
       }

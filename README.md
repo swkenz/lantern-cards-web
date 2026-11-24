@@ -36,7 +36,7 @@ Rules checks, bot runs through all three chapters, and a balance report (no team
 | `js/ui.js`, `css/style.css` | Every screen in HTML on a 1920x1080 stage scaled to the window |
 | `js/audio.js` | Synthesized sounds and music (port of Synth) |
 | `js/main.js` | Wires everything together and plays battle events |
-| `assets/models` | `akari.glb` (19 baked animations), `creatures/*.glb`, `arenas/*.glb`, `heroines/*.fbx` (Meshy 6 Lite) |
+| `assets/models` | `akari.glb` (19 baked animations), `creatures/*.glb`, `arenas/*.glb`, `heroines/*.fbx` (Meshy 6 Lite sculpts), `heroines/*.glb` (the same sculpts rigged by `tools/rig`) |
 | `assets/models/heroines/projection.json` | Where each heroine's picture sits on her sculpt |
 | `assets/art` | Card art, heroine portraits, logo, gacha banner, companion portraits, projection pictures |
 | `source_art/meshy_input` | The single-heroine pictures that were sent to Meshy |
@@ -44,6 +44,27 @@ Rules checks, bot runs through all three chapters, and a balance report (no team
 | `tools/glbinfo.mjs` | Lists the heaviest meshes/textures in a .glb |
 | `tools/align.html` | Checks a heroine's projected picture against her sculpt (`/tools/align.html?id=homura`) |
 | `tools/serve.py` | No-cache local server |
+| `tools/rig/` | Rigs the heroine sculpts with Akari's skeleton and clips (see below) |
+
+## Rigging the heroines
+
+The Meshy sculpts have no skeleton, so `tools/rig` gives each one Akari's (23 bones) and her 19 clips:
+
+```powershell
+node tools/rig/build.mjs            # all heroines, or: node tools/rig/build.mjs minase
+```
+
+- `tools/rig/joints.json` says where each joint sits in each sculpt (metres; 1.75 m tall, feet at y = 0, facing +Z).
+  `node tools/rig/joints-view.mjs homura out.png front,side` draws them over the sculpt to check or move them.
+- Skin weights are automatic: each bone owns the surface around it and the rest follows along the surface,
+  so hair, sleeves and held weapons move with the part they grow from. Floating pieces ride on the torso.
+- Clips are blended toward the sculpt's own pose (`AMOUNT` in `tools/rig/anim.mjs`): arms do most of the
+  acting, legs and hips stay close to the sculpt so long dresses keep their shape. The `pose` clip is the
+  sculpt's pose breathing with Akari's idle.
+- `node tools/rig/preview.mjs minase out.png front "bind!,pose@1,attack1@0.2,spell@0.25"` renders poses without
+  a browser (`!` colours the surface by bone). Needs `sharp` (`npm i -D sharp`).
+- Which clip each heroine strikes and supports with: `HEROINE_MOVES` in `js/stage.js`.
+  A heroine without a `.glb` falls back to her static `.fbx`.
 
 ## Re-exporting models from Unity
 
